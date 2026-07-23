@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>深圳3D地球 - 滚动叙事</title>
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.118/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.118/Build/Cesium/Cesium.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, 'Microsoft YaHei', 'PingFang SC', sans-serif;
+      overflow: hidden;
+      background: #0a0e27;
+    }
+
+    #container { display: flex; width: 100vw; height: 100vh; }
+
+    /* ===== 左侧滚动叙事面板 ===== */
+    #story-panel {
+      width: 38%;
+      height: 100vh;
+      overflow-y: auto;
+      scroll-behavior: smooth;
+      background: linear-gradient(180deg, #0a0e27 0%, #1a1f3a 30%, #1a1f3a 70%, #0a0e27 100%);
+      color: #fff;
+      z-index: 2;
+      position: relative;
+    }
+
+    #story-panel::-webkit-scrollbar { width: 4px; }
+    #story-panel::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); }
+    #story-panel::-webkit-scrollbar-thumb { background: #2a9d8f; border-radius: 2px; }
+
+    .chapter {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 80px 40px;
+      position: relative;
+    }
+
+    .chapter::before {
+      content: '';
+      position: absolute;
+      left: 40px;
+      top: 10%;
+      width: 2px;
+      height: 80%;
+      background: linear-gradient(180deg, transparent, rgba(42,157,143,0.4), transparent);
+    }
+
+    .chapter h2 {
+      font-size: 28px;
+      margin-bottom: 16px;
+      background: linear-gradient(135deg, #2a9d8f, #e9c46a);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .chapter p {
+      font-size: 15px;
+      line-height: 1.9;
+      opacity: 0.78;
+      max-width: 400px;
+    }
+
+    .chapter .landmark {
+      margin-top: 24px;
+      font-size: 13px;
+      color: #2a9d8f;
+      letter-spacing: 1px;
+      font-weight: 600;
+    }
+
+    .chapter .landmark::before {
+      content: '\25C6 ';
+    }
+
+    /* ===== 右侧 Cesium 地图 ===== */
+    #map-panel {
+      width: 62%;
+      height: 100vh;
+      position: relative;
+    }
+
+    #map { width: 100%; height: 100%; }
+
+    .cesium-viewer-bottom { display: none !important; }
+    .cesium-widget-credits { display: none !important; }
+
+    /* 加载提示 */
+    #map-loader {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #0a0e27;
+      color: #2a9d8f;
+      z-index: 10;
+      transition: opacity 0.8s;
+      font-size: 18px;
+      letter-spacing: 2px;
+    }
+    #map-loader.hidden { opacity: 0; pointer-events: none; }
+
+    /* 进度条 */
+    #progress {
+      position: fixed;
+      left: 0; top: 0;
+      height: 3px;
+      background: linear-gradient(90deg, #2a9d8f, #e9c46a);
+      z-index: 100;
+      transition: width 0.3s;
+      width: 0;
+    }
+
+    /* 章节指示器 */
+    #chapter-indicator {
+      position: fixed;
+      right: 20px;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 50;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    #chapter-indicator .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.2);
+      transition: all 0.3s;
+      cursor: pointer;
+    }
+
+    #chapter-indicator .dot.active {
+      background: #2a9d8f;
+      transform: scale(1.5);
+      box-shadow: 0 0 8px rgba(42,157,143,0.6);
+    }
+
+    /* 搜索框 */
+    #search-box {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      z-index: 50;
+      width: 260px;
+    }
+    #search-input {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1px solid rgba(42,157,143,0.4);
+      border-radius: 8px;
+      background: rgba(10,14,39,0.85);
+      color: #fff;
+      font-size: 14px;
+      outline: none;
+      backdrop-filter: blur(8px);
+      transition: border-color 0.3s;
+    }
+    #search-input::placeholder { color: rgba(255,255,255,0.4); }
+    #search-input:focus { border-color: #2a9d8f; }
+    #search-results {
+      margin-top: 4px;
+      border-radius: 8px;
+      overflow: hidden;
+      display: none;
+    }
+    #search-results.show { display: block; }
+    .search-item {
+      padding: 10px 14px;
+      background: rgba(10,14,39,0.9);
+      color: #fff;
+      font-size: 14px;
+      cursor: pointer;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      transition: background 0.2s;
+    }
+    .search-item:hover { background: rgba(42,157,143,0.3); }
+    .search-item:last-child { border-bottom: none; }
+    .search-item .sub { font-size: 12px; color: rgba(255,255,255,0.45); margin-top: 2px; }
+
+    /* 顶部标题栏 */
+    #title-bar {
+      position: fixed;
+      top: 16px;
+      right: 24px;
+      z-index: 50;
+      color: rgba(255,255,255,0.6);
+      font-size: 13px;
+      letter-spacing: 1px;
+    }
+
+    #title-bar span { color: #2a9d8f; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div id="progress"></div>
+  <div id="title-bar">深圳九区 · <span>3D 地球叙事</span></div>
+  <div id="container">
+    <div id="story-panel"></div>
+    <div id="map-panel">
+      <div id="map-loader">正在加载3D地球...</div>
+      <div id="search-box">
+        <input id="search-input" type="text" placeholder="搜索深圳九区..." autocomplete="off">
+        <div id="search-results"></div>
+      </div>
+      <div id="map"></div>
+    </div>
+  </div>
+  <div id="chapter-indicator"></div>
+
+  <script>
+    // ===== 星图地球数据云 API token =====
+    const GEOVIS_TOKEN = 'd2ec1d020ca3fe16f42eca1ba176d65b587a9572d8fab2e9c13118996cda2e43';
+
+    // ===== 深圳九区数据 =====
+    const districts = [
+      { name: '福田区', subtitle: '深圳市中心', center: [114.0559, 22.5289], landmark: '平安金融中心', desc: '福田区是深圳市中心城区，市委市政府所在地。平安金融中心高592米，是深圳第一高楼，集商务、金融、商业于一体。' },
+      { name: '罗湖区', subtitle: '改革开放起点', center: [114.1315, 22.5553], landmark: '地王大厦', desc: '罗湖区是深圳经济特区最早开发的城区。地王大厦高384米，曾是中国第一高楼，顶部的绿色尖塔是深圳标志天际线之一。' },
+      { name: '南山区', subtitle: '科技创新高地', center: [113.9302, 22.5333], landmark: '深圳湾体育中心', desc: '南山区聚集了腾讯、大疆、中兴等众多科技巨头，是深圳的创新引擎。深圳湾体育中心是2011年大运会主场馆。' },
+      { name: '盐田区', subtitle: '港口与海滨', center: [114.2350, 22.5578], landmark: '大梅沙海滨', desc: '盐田区拥有盐田港这一世界级集装箱港口，年吞吐量超千万标箱。大梅沙海滨公园是深圳最受欢迎的滨海度假胜地。' },
+      { name: '宝安区', subtitle: '制造与航空枢纽', center: [113.8831, 22.5560], landmark: '深圳宝安国际机场', desc: '宝安区是深圳国际机场所在地，也是先进制造业的重要基地。宝安中心区正在崛起为深圳西部城市新中心。' },
+      { name: '龙岗区', subtitle: '东部中心', center: [114.2474, 22.7198], landmark: '大运中心', desc: '龙岗区是深圳面积最大的行政区之一。大运中心是2011年世界大学生运动会主场馆，也是深圳东部最大的体育文化综合体。' },
+      { name: '龙华区', subtitle: '高铁枢纽', center: [114.0443, 22.6919], landmark: '深圳北站', desc: '龙华区是深圳北站所在地，这座高铁枢纽连接全国，日均发送旅客超20万人次，是深圳重要的交通门户。' },
+      { name: '光明区', subtitle: '科学城', center: [113.9350, 22.7486], landmark: '光明科学城', desc: '光明区正在建设光明科学城，这是深圳综合性国家科学中心的核心承载区，聚焦前沿基础研究和重大科技基础设施。' },
+      { name: '坪山区', subtitle: '未来产业', center: [114.3460, 22.6906], landmark: '坪山中心', desc: '坪山区重点发展生物医药、新能源汽车等未来产业，比亚迪全球总部即位于此，是深圳东部先进制造业高地。' }
+    ];
+
+    // ===== 初始化 Cesium 3D 地球 =====
+    Cesium.Ion.defaultAccessToken = undefined;
+
+    const viewer = new Cesium.Viewer('map', {
+      baseLayer: false,
+      baseLayerPicker: false,
+      geocoder: false,
+      homeButton: false,
+      sceneModePicker: false,
+      navigationHelpButton: false,
+      animation: false,
+      timeline: false,
+      fullscreenButton: false,
+      vrButton: false,
+      infoBox: false,
+      selectionIndicator: false,
+      navigationInstructionsInitiallyVisible: false,
+      creditContainer: document.createElement('div')
+    });
+
+    // 星图地球卫星影像底图
+    viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+      url: 'https://tiles1.geovisearth.com/base/v1/img/{z}/{x}/{y}?format=webp&tmsIds=w&token=' + GEOVIS_TOKEN,
+      maximumLevel: 18
+    }));
+
+    // 星图地球中文注记层（地名、道路标注）
+    viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+      url: 'https://tiles1.geovisearth.com/base/v1/cia/{z}/{x}/{y}?format=webp&tmsIds=w&token=' + GEOVIS_TOKEN,
+      maximumLevel: 18
+    }));
+
+    // 大气层和星空效果
+    viewer.scene.globe.enableLighting = true;
+    viewer.scene.skyAtmosphere.show = true;
+    viewer.scene.fog.enabled = true;
+
+    // ===== 隐藏加载提示 =====
+    let loaderHidden = false;
+    function hideLoader() {
+      if (!loaderHidden) {
+        loaderHidden = true;
+        document.getElementById('map-loader').classList.add('hidden');
+      }
+    }
+
+    viewer.scene.globe.tileLoadProgressEvent.addEventListener(function(queueLength) {
+      if (queueLength === 0) {
+        setTimeout(hideLoader, 500);
+      }
+    });
+    setTimeout(hideLoader, 8000);
+
+    // 初始视角 - 静态高空俯瞰，显示深圳全市
+    viewer.camera.setView({
+      destination: Cesium.Cartesian3.fromDegrees(114.1, 22.05, 80000),
+      orientation: {
+        heading: Cesium.Math.toRadians(0),
+        pitch: Cesium.Math.toRadians(-55),
+        roll: 0
+      }
+    });
+
+    // ===== 生成左侧故事面板 =====
+    var storyPanel = document.getElementById('story-panel');
+    var chapterIndicator = document.getElementById('chapter-indicator');
+
+    // 引言
+    var intro = document.createElement('div');
+    intro.className = 'chapter';
+    intro.innerHTML =
+      '<h2>深圳九区巡礼</h2>' +
+      '<p>从渔村到国际化大都市，深圳用四十余年走完了别人百年的路。滚动浏览深圳九个行政区，感受这座城市的空间格局与未来脉动。</p>';
+    storyPanel.appendChild(intro);
+
+    // 各区章节
+    districts.forEach(function(d, i) {
+      var ch = document.createElement('div');
+      ch.className = 'chapter';
+      ch.dataset.index = i + 1;
+      ch.innerHTML =
+        '<h2>' + d.name + '</h2>' +
+        '<p>' + d.desc + '</p>' +
+        '<div class="landmark">' + d.landmark + '</div>';
+      storyPanel.appendChild(ch);
+    });
+
+    // 结尾
+    var outro = document.createElement('div');
+    outro.className = 'chapter';
+    outro.innerHTML =
+      '<h2>深圳，不止于此</h2>' +
+      '<p>从经济特区到先行示范区，深圳的每一步都在书写历史。九个区，各有各的故事，各有各的未来。这座年轻的城市，仍在加速奔跑。</p>';
+    storyPanel.appendChild(outro);
+
+    // 章节指示器圆点
+    var totalChapters = districts.length + 2;
+    for (var i = 0; i < totalChapters; i++) {
+      (function(idx) {
+        var dot = document.createElement('div');
+        dot.className = 'dot';
+        dot.addEventListener('click', function() {
+          var chapters = document.querySelectorAll('.chapter');
+          if (chapters[idx]) chapters[idx].scrollIntoView({ behavior: 'smooth' });
+        });
+        chapterIndicator.appendChild(dot);
+      })(i);
+    }
+
+    // ===== 滚动联动 =====
+    var currentChapter = -1;
+
+    function getCenterChapter() {
+      var chapters = document.querySelectorAll('.chapter');
+      var viewportCenter = window.innerHeight / 2;
+      var closest = -1;
+      var closestDist = Infinity;
+
+      chapters.forEach(function(ch, i) {
+        var rect = ch.getBoundingClientRect();
+        var chCenter = rect.top + rect.height / 2;
+        var dist = Math.abs(chCenter - viewportCenter);
+        if (dist < closestDist) {
+          closestDist = dist;
+          closest = i;
+        }
+      });
+      return closest;
+    }
+
+    function flyToChapter(index) {
+      if (index === currentChapter) return;
+      currentChapter = index;
+
+      // 更新指示器
+      document.querySelectorAll('#chapter-indicator .dot').forEach(function(dot, i) {
+        dot.classList.toggle('active', i === index);
+      });
+
+      // index 0=引言(全景), 1..9=各区(近景), 10=结尾(拉远)
+      if (index >= 1 && index <= districts.length) {
+        var d = districts[index - 1];
+        // 相机纬度往南偏移0.13°，让区中心落在视角正中而非底部
+        viewer.camera.flyTo({
+          destination: Cesium.Cartesian3.fromDegrees(d.center[0], d.center[1] - 0.13, 12000),
+          orientation: {
+            heading: Cesium.Math.toRadians(0),
+            pitch: Cesium.Math.toRadians(-35),
+            roll: 0
+          },
+          duration: 1.5,
+          easingFunction: Cesium.EasingFunction.CUBIC_OUT
+        });
+      } else if (index === 0) {
+        viewer.camera.flyTo({
+          destination: Cesium.Cartesian3.fromDegrees(114.1, 22.05, 80000),
+          orientation: {
+            heading: Cesium.Math.toRadians(0),
+            pitch: Cesium.Math.toRadians(-55),
+            roll: 0
+          },
+          duration: 1.5
+        });
+      } else {
+        // 结尾 - 拉远到全景
+        viewer.camera.flyTo({
+          destination: Cesium.Cartesian3.fromDegrees(114.3, 22.7, 150000),
+          orientation: {
+            heading: Cesium.Math.toRadians(15),
+            pitch: Cesium.Math.toRadians(-28),
+            roll: 0
+          },
+          duration: 2
+        });
+      }
+    }
+
+    // 滚动事件（节流）
+    var scrollTimer = null;
+    document.getElementById('story-panel').addEventListener('scroll', function() {
+      var sp = document.getElementById('story-panel');
+      var progress = (sp.scrollTop / (sp.scrollHeight - sp.clientHeight)) * 100;
+      document.getElementById('progress').style.width = progress + '%';
+
+      if (scrollTimer) clearTimeout(scrollTimer);
+      scrollTimer = setTimeout(function() {
+        flyToChapter(getCenterChapter());
+      }, 120);
+    });
+
+    // ===== 内置搜索功能 =====
+    var searchInput = document.getElementById('search-input');
+    var searchResults = document.getElementById('search-results');
+
+    searchInput.addEventListener('input', function() {
+      var q = searchInput.value.trim().toLowerCase();
+      if (!q) {
+        searchResults.classList.remove('show');
+        searchResults.innerHTML = '';
+        return;
+      }
+
+      var matches = districts.filter(function(d) {
+        return d.name.toLowerCase().indexOf(q) !== -1 ||
+               d.subtitle.toLowerCase().indexOf(q) !== -1 ||
+               d.landmark.toLowerCase().indexOf(q) !== -1;
+      });
+
+      if (matches.length === 0) {
+        searchResults.innerHTML = '<div class="search-item">未找到匹配区域</div>';
+        searchResults.classList.add('show');
+        return;
+      }
+
+      searchResults.innerHTML = matches.map(function(d) {
+        var idx = districts.indexOf(d);
+        return '<div class="search-item" data-idx="' + idx + '">' +
+               d.name + '<div class="sub">' + d.landmark + '</div></div>';
+      }).join('');
+      searchResults.classList.add('show');
+    });
+
+    // 点击搜索结果飞行定位
+    searchResults.addEventListener('click', function(e) {
+      var item = e.target.closest('.search-item');
+      if (!item || !item.dataset.idx) return;
+
+      var idx = parseInt(item.dataset.idx);
+      var d = districts[idx];
+
+      viewer.camera.flyTo({
+        destination: Cesium.Cartesian3.fromDegrees(d.center[0], d.center[1] - 0.13, 12000),
+        orientation: {
+          heading: Cesium.Math.toRadians(0),
+          pitch: Cesium.Math.toRadians(-35),
+          roll: 0
+        },
+        duration: 1.5,
+        easingFunction: Cesium.EasingFunction.CUBIC_OUT
+      });
+
+      // 同时滚动左侧到对应章节
+      var chapters = document.querySelectorAll('.chapter');
+      if (chapters[idx + 1]) chapters[idx + 1].scrollIntoView({ behavior: 'smooth' });
+
+      // 清空搜索
+      searchInput.value = '';
+      searchResults.classList.remove('show');
+    });
+
+    // 点击外部关闭搜索结果
+    document.addEventListener('click', function(e) {
+      if (!e.target.closest('#search-box')) {
+        searchResults.classList.remove('show');
+      }
+    });
+
+    // 初始化第一个章节（不触发flyTo，保持setView的初始高空视角）
+    currentChapter = 0;
+    document.querySelectorAll('#chapter-indicator .dot').forEach(function(dot, i) {
+      dot.classList.toggle('active', i === 0);
+    });
+  </script>
+</body>
+</html>
